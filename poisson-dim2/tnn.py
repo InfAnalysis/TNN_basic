@@ -19,7 +19,7 @@ class TNN_Sin(nn.Module):
     def grad_grad(self,x):
         return -torch.sin(x)
 
-        
+
 
 
 # ********** Network layers **********
@@ -94,7 +94,7 @@ class TNN_Extra(nn.Module):
         super(TNN_Extra, self).__init__()
         self.size = size
         self.beta = nn.Parameter(torch.empty(self.size))
-        
+
     def extra_repr(self):
         return 'size={}'.format(self.size)
 
@@ -105,7 +105,7 @@ class TNN(nn.Module):
     """
     Architectures of the simple tensor neural network.
     FNN on each demension has the same size,
-    and the input integration points are same in different dinension. 
+    and the input integration points are same in different dinension.
     TNN values and gradient values at data points are provided.
 
     Parameters:
@@ -138,9 +138,11 @@ class TNN(nn.Module):
     # Register learnable parameters of TNN module.
     def __init_modules(self):
         modules = nn.ModuleDict()
+        # Create two parallel subnetworks per dimension whose outputs will be multiplied
         for i in range(1, len(self.size)):
             bias = True if self.size[i] > 0 else False
-            modules['TNN_Linear{}'.format(i-1)] = TNN_Linear(self.dim,abs(self.size[i]),abs(self.size[i-1]),bias)
+            modules['TNN1_Linear{}'.format(i-1)] = TNN_Linear(self.dim,abs(self.size[i]),abs(self.size[i-1]),bias)
+            modules['TNN2_Linear{}'.format(i-1)] = TNN_Linear(self.dim,abs(self.size[i]),abs(self.size[i-1]),bias)
         if self.scaling:
             modules['TNN_Scaling'] = TNN_Scaling([self.p])
         if self.extra_size:
@@ -153,16 +155,16 @@ class TNN(nn.Module):
         if self.init_type == 'default':
             for i in range(1, len(self.size)):
                 for j in range(self.dim):
-                    nn.init.orthogonal_(self.ms['TNN_Linear{}'.format(i-1)].weight[j,:,:])
-                    # nn.init.normal_(self.ms['TNN_Linear{}'.format(i-1)].weight[j,:,:])
+                    nn.init.orthogonal_(self.ms['TNN1_Linear{}'.format(i-1)].weight[j,:,:])
+                    nn.init.orthogonal_(self.ms['TNN2_Linear{}'.format(i-1)].weight[j,:,:])
                 if self.size[i] > 0:
-                    # nn.init.orthogonal_(self.ms['TNN_Linear{}'.format(i-1)].bias)
-                    nn.init.constant_(self.ms['TNN_Linear{}'.format(i-1)].bias, 0.5)
+                    nn.init.constant_(self.ms['TNN1_Linear{}'.format(i-1)].bias, 0.5)
+                    nn.init.constant_(self.ms['TNN2_Linear{}'.format(i-1)].bias, 0.5)
             if self.scaling:
                 nn.init.constant_(self.ms['TNN_Scaling'].alpha, 1)
             if self.extra_size:
                 nn.init.constant_(self.ms['TNN_Extra'].beta, 1)
-        
+
 
     # function to return scaling parameters
     def scaling_par(self):
@@ -185,7 +187,7 @@ class TNN(nn.Module):
             w: quadrature weights [N]
             x: quadrature points [N]
             need_grad: if return gradient or not
-        
+
         Returns:
             phi: values of each dimensional FNN [dim, p, N]
             grad_phi: gradient values of each dimensional FNN [dim, p, N]
@@ -197,14 +199,20 @@ class TNN(nn.Module):
                 bd_value = None
             else:
                 bd_value = self.bd(x)
-            # Forward process.
+            # Forward process for two subnetworks then multiply
+            x1 = x
+            x2 = x
             for i in range(1, len(self.size) - 1):
-                x = self.ms['TNN_Linear{}'.format(i-1)](x)
-                x = self.activation(x)
+                x1 = self.ms['TNN1_Linear{}'.format(i-1)](x1)
+                x1 = self.activation(x1)
+                x2 = self.ms['TNN2_Linear{}'.format(i-1)](x2)
+                x2 = self.activation(x2)
+            out1 = self.ms['TNN1_Linear{}'.format(len(self.size) - 2)](x1)
+            out2 = self.ms['TNN2_Linear{}'.format(len(self.size) - 2)](x2)
             if bd_value==None:
-                phi = self.ms['TNN_Linear{}'.format(len(self.size) - 2)](x)
+                phi = out1*out2
             else:
-                phi = self.ms['TNN_Linear{}'.format(len(self.size) - 2)](x)*bd_value
+                phi = (out1*out2)*bd_value
             # normalization
             if normed:
                 return phi / torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)
@@ -224,20 +232,30 @@ class TNN(nn.Module):
                 grad_bd_value = None
             else:
                 grad_bd_value = self.grad_bd(x)
-            # Compute forward and backward process simutaneously.
-            grad_x = self.ms['TNN_Linear{}'.format(0)].weight
+            # Compute forward and backward process simutaneously for two subnetworks
+            x1 = x
+            x2 = x
+            grad_x1 = self.ms['TNN1_Linear{}'.format(0)].weight
+            grad_x2 = self.ms['TNN2_Linear{}'.format(0)].weight
             for i in range(1, len(self.size) - 1):
-                x = self.ms['TNN_Linear{}'.format(i-1)](x)
-                grad_x = self.activation.grad(x)*grad_x
-                grad_x = self.ms['TNN_Linear{}'.format(i)].weight@grad_x
-                x = self.activation(x)
-            x = self.ms['TNN_Linear{}'.format(len(self.size) - 2)](x)
+                x1 = self.ms['TNN1_Linear{}'.format(i-1)](x1)
+                grad_x1 = self.activation.grad(x1)*grad_x1
+                grad_x1 = self.ms['TNN1_Linear{}'.format(i)].weight@grad_x1
+                x1 = self.activation(x1)
+
+                x2 = self.ms['TNN2_Linear{}'.format(i-1)](x2)
+                grad_x2 = self.activation.grad(x2)*grad_x2
+                grad_x2 = self.ms['TNN2_Linear{}'.format(i)].weight@grad_x2
+                x2 = self.activation(x2)
+            out1 = self.ms['TNN1_Linear{}'.format(len(self.size) - 2)](x1)
+            out2 = self.ms['TNN2_Linear{}'.format(len(self.size) - 2)](x2)
+            # Product rule and boundary condition
             if self.bd==None:
-                phi = x
-                grad_phi = grad_x
+                phi = out1*out2
+                grad_phi = grad_x1*out2 + out1*grad_x2
             else:
-                phi = x*bd_value
-                grad_phi = x*grad_bd_value+grad_x*bd_value
+                phi = (out1*out2)*bd_value
+                grad_phi = (out1*out2)*grad_bd_value + (grad_x1*out2 + out1*grad_x2)*bd_value
             # normalization
             if normed:
                 return phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1))
@@ -245,7 +263,7 @@ class TNN(nn.Module):
                 return phi, grad_phi
 
 
-        # Compute values and gradient values of each one-dimensional input FNN at each quadrature point simutaneously.
+        # Compute values, first and second gradient values for each one-dimensional input FNN at each quadrature point simutaneously.
         if need_grad==2:
             # Get values of forced boundary condition function.
             if self.bd==None:
@@ -263,25 +281,45 @@ class TNN(nn.Module):
             else:
                 grad_grad_bd_value = self.grad_grad_bd(x)
 
-            # Compute forward and backward process simutaneously.
-            grad_x = self.ms['TNN_Linear{}'.format(0)].weight
-            grad_grad_x = torch.zeros_like(grad_x)
+            # Compute forward and backward process simutaneously for two subnetworks
+            x1 = x
+            x2 = x
+            grad_x1 = self.ms['TNN1_Linear{}'.format(0)].weight
+            grad_x2 = self.ms['TNN2_Linear{}'.format(0)].weight
+            grad_grad_x1 = torch.zeros_like(grad_x1)
+            grad_grad_x2 = torch.zeros_like(grad_x2)
             for i in range(1, len(self.size) - 1):
-                x = self.ms['TNN_Linear{}'.format(i-1)](x)
-                grad_grad_x = self.activation.grad_grad(x)*(grad_x**2)+self.activation.grad(x)*grad_grad_x
-                grad_grad_x = self.ms['TNN_Linear{}'.format(i)].weight@grad_grad_x
-                grad_x = self.activation.grad(x)*grad_x
-                grad_x = self.ms['TNN_Linear{}'.format(i)].weight@grad_x
-                x = self.activation(x)
-            x = self.ms['TNN_Linear{}'.format(len(self.size) - 2)](x)
+                # subnetwork 1
+                x1 = self.ms['TNN1_Linear{}'.format(i-1)](x1)
+                grad_grad_x1 = self.activation.grad_grad(x1)*(grad_x1**2)+self.activation.grad(x1)*grad_grad_x1
+                grad_grad_x1 = self.ms['TNN1_Linear{}'.format(i)].weight@grad_grad_x1
+                grad_x1 = self.activation.grad(x1)*grad_x1
+                grad_x1 = self.ms['TNN1_Linear{}'.format(i)].weight@grad_x1
+                x1 = self.activation(x1)
+                # subnetwork 2
+                x2 = self.ms['TNN2_Linear{}'.format(i-1)](x2)
+                grad_grad_x2 = self.activation.grad_grad(x2)*(grad_x2**2)+self.activation.grad(x2)*grad_grad_x2
+                grad_grad_x2 = self.ms['TNN2_Linear{}'.format(i)].weight@grad_grad_x2
+                grad_x2 = self.activation.grad(x2)*grad_x2
+                grad_x2 = self.ms['TNN2_Linear{}'.format(i)].weight@grad_x2
+                x2 = self.activation(x2)
+            out1 = self.ms['TNN1_Linear{}'.format(len(self.size) - 2)](x1)
+            out2 = self.ms['TNN2_Linear{}'.format(len(self.size) - 2)](x2)
             if self.bd==None:
-                phi = x
-                grad_phi = grad_x
-                grad_grad_phi = grad_grad_x
+                phi = out1
+                grad_phi = grad_x1
+                grad_grad_phi = grad_grad_x1
+                # combine via product
+                phi = out1*out2
+                grad_phi = grad_x1*out2 + out1*grad_x2
+                grad_grad_phi = grad_grad_x1*out2 + 2*grad_x1*grad_x2 + out1*grad_grad_x2
             else:
-                phi = x*bd_value
-                grad_phi = x*grad_bd_value+grad_x*bd_value
-                grad_grad_phi = x*grad_grad_bd_value + 2*grad_x*grad_bd_value + grad_grad_x*bd_value
+                base_phi = out1*out2
+                base_grad = grad_x1*out2 + out1*grad_x2
+                base_grad_grad = grad_grad_x1*out2 + 2*grad_x1*grad_x2 + out1*grad_grad_x2
+                phi = base_phi*bd_value
+                grad_phi = base_phi*grad_bd_value + base_grad*bd_value
+                grad_grad_phi = base_phi*grad_grad_bd_value + 2*base_grad*grad_bd_value + base_grad_grad*bd_value
             # normalization
             if normed:
                 return phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1))
