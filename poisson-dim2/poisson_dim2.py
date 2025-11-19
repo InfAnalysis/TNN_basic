@@ -6,6 +6,8 @@ from quadrature import *
 from integration import *
 from tnn import *
 
+import json
+import matplotlib.pyplot as plt  # type: ignore
 import os
 import time
 
@@ -16,6 +18,56 @@ dtype = torch.double
 # dtype = torch.float
 # device = 'cpu'
 device = 'cuda'
+
+results_dir = os.path.join(os.path.dirname(__file__), 'results')
+os.makedirs(results_dir, exist_ok=True)
+
+training_logs = {
+    'adam': [],
+    'lbfgs': []
+}
+
+
+def log_metrics(log_store, optimizer_name, epoch_value, loss_value, error0_value, error1_value):
+    log_store[optimizer_name].append(
+        {
+            'epoch': int(epoch_value),
+            'loss': float(loss_value),
+            'error0': float(error0_value),
+            'error1': float(error1_value)
+        }
+    )
+
+
+def save_training_logs(log_store):
+    history_path = os.path.join(results_dir, 'training_history.json')
+    with open(history_path, 'w', encoding='utf-8') as history_file:
+        json.dump(log_store, history_file, indent=2)
+    print(f'Training history saved to {history_path}')
+    return history_path
+
+
+def plot_epoch_error_loglog(history, optimizer_name):
+    if not history:
+        return None
+    epochs = [entry['epoch'] for entry in history]
+    error0 = [entry['error0'] for entry in history]
+    error1 = [entry['error1'] for entry in history]
+
+    plt.figure()
+    plt.loglog(epochs, error0, label='error0')
+    plt.loglog(epochs, error1, label='error1')
+    plt.xlabel('Epoch')
+    plt.ylabel('Error')
+    plt.title(f'{optimizer_name.upper()} epoch-error')
+    plt.legend()
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.tight_layout()
+    figure_path = os.path.join(results_dir, f'{optimizer_name.lower()}_epoch_error.png')
+    plt.savefig(figure_path, dpi=300)
+    plt.close()
+    print(f'Epoch-error loglog plot saved to {figure_path}')
+    return figure_path
 
 
 # ********** generate data points **********
@@ -122,7 +174,7 @@ def post_process(model, w, x):
     error1 = error1_estimate(w, alpha_F, F, C, phi, grad_F, grad_phi, projection=False) / torch.sqrt(Int2TNN(w, alpha_F, F, alpha_F, F)) / ((dim+3)*pi**2)
     print('{:<9}{:<25}'.format('error0 = ', error0))
     print('{:<9}{:<25}'.format('error1 = ', error1))
-    return
+    return error0.item(), error1.item()
 
 
 # ********** training process **********
@@ -144,7 +196,8 @@ for e in range(epochs):
         print('{:<9}{:<25}'.format('epoch = ', e))
         print('{:<9}{:<25}'.format('loss = ', loss.item()))
         # user-defined post-process
-        post_process(model, w, x)
+        error0_val, error1_val = post_process(model, w, x)
+        log_metrics(training_logs, 'adam', e, loss.item(), error0_val, error1_val)
         # save model
         if save:
             if not os.path.exists('model'): os.mkdir('model')
@@ -161,7 +214,8 @@ for e in range(epochs):
         print('{:<9}{:<25}'.format('loss = ', loss.item()))
 
         # user-defined post-process
-        post_process(model, w, x)
+        error0_val, error1_val = post_process(model, w, x)
+        log_metrics(training_logs, 'adam', e+1, loss.item(), error0_val, error1_val)
         # save model
         if save:
             torch.save(model, 'model/model{}.pkl'.format(e+1))
@@ -196,7 +250,8 @@ for e in range(epochs):
         print('{:<9}{:<25}'.format('epoch = ', e))
         print('{:<9}{:<25}'.format('loss = ', loss.item()))
         # user-defined post-process
-        post_process(model, w, x)
+        error0_val, error1_val = post_process(model, w, x)
+        log_metrics(training_logs, 'lbfgs', e, loss.item(), error0_val, error1_val)
 
         # post process
     if (e+1) % print_every == 0:
@@ -204,4 +259,9 @@ for e in range(epochs):
         print('{:<9}{:<25}'.format('epoch = ', e+1))
         print('{:<9}{:<25}'.format('loss = ', loss.item()))
         # user-defined post-process
-        post_process(model, w, x)
+        error0_val, error1_val = post_process(model, w, x)
+        log_metrics(training_logs, 'lbfgs', e+1, loss.item(), error0_val, error1_val)
+
+history_file = save_training_logs(training_logs)
+for optimizer_name, history in training_logs.items():
+    plot_epoch_error_loglog(history, optimizer_name)
