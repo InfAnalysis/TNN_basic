@@ -79,7 +79,9 @@ def criterion(model, w, x):
 
     A = part1
     B = (dim+3)*np.pi**2*part2
-    C = torch.linalg.solve(A,B)
+    # Add regularization term to prevent singular matrix
+    reg = 1e-6 * torch.eye(A.shape[0], device=device, dtype=dtype)
+    C = torch.linalg.solve(A + reg, B)
 
     # laplace
     phi_expand = phi.expand(dim,-1,-1,-1).clone()
@@ -111,7 +113,9 @@ def post_process(model, w, x):
 
     A = part1
     B = (dim+3)*np.pi**2*part2
-    C = torch.linalg.solve(A,B)
+    # Add regularization term to prevent singular matrix
+    reg = 1e-6 * torch.eye(A.shape[0], device=device, dtype=dtype)
+    C = torch.linalg.solve(A + reg, B)
 
     # compute errors
     error0 = error0_estimate(w, alpha_F, F, C, phi, projection=False) / torch.sqrt(Int2TNN(w, alpha_F, F, alpha_F, F)) / ((dim+3)*pi**2)

@@ -215,7 +215,8 @@ class TNN(nn.Module):
                 phi = (out1*out2)*bd_value
             # normalization
             if normed:
-                return phi / torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)
+                norm = torch.sqrt(torch.sum(w*phi**2, dim=2) + 1e-10).unsqueeze(dim=-1)
+                return phi / norm
             else:
                 return phi
 
@@ -258,7 +259,8 @@ class TNN(nn.Module):
                 grad_phi = (out1*out2)*grad_bd_value + (grad_x1*out2 + out1*grad_x2)*bd_value
             # normalization
             if normed:
-                return phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1))
+                norm = torch.sqrt(torch.sum(w*phi**2, dim=2) + 1e-10).unsqueeze(dim=-1)
+                return phi / norm, grad_phi / norm
             else:
                 return phi, grad_phi
 
@@ -322,7 +324,8 @@ class TNN(nn.Module):
                 grad_grad_phi = base_phi*grad_grad_bd_value + 2*base_grad*grad_bd_value + base_grad_grad*bd_value
             # normalization
             if normed:
-                return phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1)), grad_grad_phi / (torch.sqrt(torch.sum(w*phi**2,dim=2)).unsqueeze(dim=-1))
+                norm = torch.sqrt(torch.sum(w*phi**2, dim=2) + 1e-10).unsqueeze(dim=-1)
+                return phi / norm, grad_phi / norm, grad_grad_phi / norm
             else:
                 return phi, grad_phi, grad_grad_phi
 
